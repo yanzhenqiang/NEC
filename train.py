@@ -1,7 +1,6 @@
 import argparse
 import subprocess
 import time
-from itertools import count
 from torch.utils.tensorboard import SummaryWriter
 
 from models import DQN
@@ -17,11 +16,8 @@ if __name__ == "__main__":
 
   experiment_name = f"{args.env}__{int(time.time())}"
   writer = SummaryWriter(f"runs/{experiment_name}")
-
-  for t in count():
-    if t == 0:
-      reward = agent.warmup()
-    else:
-      reward = agent.episode()
+  for t in range(100):
+    reward = agent.episode(t)
     print("Episode {}\nTotal Reward: {}".format(t, reward))
-    writer.add_scalar("score", reward, t)
+    agent.update(t)
+    writer.add_scalar("Reward", reward, t)

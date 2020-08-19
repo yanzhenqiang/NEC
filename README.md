@@ -7,5 +7,5 @@ pip install -r requirements.txt
 
 # Usage
 ```
-python train.py --env=GYM_ENV_ID
+python train.py
 ```

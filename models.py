@@ -1,6 +1,9 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import torch.optim as optim
+from torch.nn import Parameter
+from pyflann import FLANN
 
 class DQN(nn.Module):
   def __init__(self, embedding_size):
@@ -17,12 +20,6 @@ class DQN(nn.Module):
     out = self.head(out)
     return out
 
-import torch
-import torch.optim as optim
-from torch.nn import Parameter
-from pyflann import FLANN
-
-
 class DND:
   def __init__(self, kernel, num_neighbors, max_memory, lr):
     self.kernel = kernel
@@ -33,29 +30,16 @@ class DND:
     self.values = None
     self.kdtree = FLANN()
 
-    # key_cache stores a cache of all keys that exist in the DND
-    # This makes DND updates efficient
     self.key_cache = {}
-    # stale_index is a flag that indicates whether or not the index in self.kdtree is stale
-    # This allows us to only rebuild the kdtree index when necessary
     self.stale_index = True
-    # indexes_to_be_updated is the set of indexes to be updated on a call to update_params
-    # This allows us to rebuild only the keys of key_cache that need to be rebuilt when necessary
     self.indexes_to_be_updated = set()
-
-    # Keys and value to be inserted into self.keys and self.values when commit_insert is called
     self.keys_to_be_inserted = None
     self.values_to_be_inserted = None
 
     # Move recently used lookup indexes
-    # These should be moved to the back of self.keys and self.values to get LRU property
     self.move_to_back = set()
 
   def get_index(self, key):
-    """
-    If key exists in the DND, return its index
-    Otherwise, return None
-    """
     if self.key_cache.get(tuple(key.data.cpu().numpy()[0])) is not None:
       if self.stale_index:
         self.commit_insert()
@@ -64,18 +48,12 @@ class DND:
       return None
 
   def update(self, value, index):
-    """
-    Set self.values[index] = value
-    """
     values = self.values.data
     values[index] = value[0].data
     self.values = Parameter(values)
     self.optimizer = optim.RMSprop([self.keys, self.values], lr=self.lr)
 
   def insert(self, key, value):
-    """
-    Insert key, value pair into DND
-    """
     if self.keys_to_be_inserted is None:
       # Initial insert
       self.keys_to_be_inserted = key.data
@@ -118,25 +96,24 @@ class DND:
     self.kdtree.build_index(self.keys.data.cpu().numpy())
     self.stale_index = False
 
-  def lookup(self, lookup_key, update_flag=False):
+  def lookup(self, key, update=False):
     """
-    Perform DND lookup
-    If update_flag == True, add the nearest neighbor indexes to self.indexes_to_be_updated
+      If update == True, add the nearest neighbor indexes to self.indexes_to_be_updated
     """
     lookup_indexes = self.kdtree.nn_index(
-        lookup_key.data.cpu().numpy(), min(self.num_neighbors, len(self.keys)))[0][0]
+        key.data.cpu().numpy(), min(self.num_neighbors, len(self.keys)))[0][0]
     output = 0
     kernel_sum = 0
     for i, index in enumerate(lookup_indexes):
-      if i == 0 and self.key_cache.get(tuple(lookup_key[0].data.cpu().numpy())) is not None:
-        # If a key exactly equal to lookup_key is used in the DND lookup calculation
+      if i == 0 and self.key_cache.get(tuple(key[0].data.cpu().numpy())) is not None:
+        # If a key exactly equal to key is used in the DND lookup calculation
         # then the loss becomes non-differentiable. Just skip this case to avoid the issue.
         continue
-      if update_flag:
+      if update:
         self.indexes_to_be_updated.add(int(index))
       else:
         self.move_to_back.add(int(index))
-      kernel_val = self.kernel(self.keys[int(index)], lookup_key[0])
+      kernel_val = self.kernel(self.keys[int(index)], key[0])
       output += kernel_val * self.values[int(index)]
       kernel_sum += kernel_val
     output = output / kernel_sum
